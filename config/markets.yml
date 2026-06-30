@@ -21,6 +21,7 @@ settings:
   price_interval: "1d"
 
   track_outcome: "Yes"            # 追踪哪个结果的概率
+  prob_spike_abs_pp: 10           # 相邻概率点变化超过多少百分点时标记为“大幅变动”
 
 # 盘口标题括号里的商品代码 → 标的物(Yahoo 符号 / 展示名 / 单位)
 # 例:"Will Gold (GC) hit (HIGH) $6,000..." 里的 GC

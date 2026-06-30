@@ -15,6 +15,10 @@ def _round3(x):
     return None if x is None else round(x, 3)
 
 
+def _round2(x):
+    return None if x is None else round(x, 2)
+
+
 def pearson(xs: list[float], ys: list[float]) -> float | None:
     n = len(xs)
     if n < 3:
@@ -35,9 +39,12 @@ def _paired_on_price_dates(prob: list[dict], price: list[dict]) -> tuple[list, l
     prob_sorted = sorted(prob, key=lambda x: x["t"])
     price_sorted = sorted(price, key=lambda x: x["t"])
     first_prob = prob_sorted[0]["t"]
+    last_prob = prob_sorted[-1]["t"]
     out_p, out_pr = [], []
     j, last = 0, None
     for pr in price_sorted:
+        if pr["t"] > last_prob:
+            break
         while j < len(prob_sorted) and prob_sorted[j]["t"] <= pr["t"]:
             last = prob_sorted[j]["v"]
             j += 1
@@ -83,25 +90,73 @@ def compute_stats(prob: list[dict], price: list[dict]) -> dict:
     return base
 
 
+def series_change(series: list[dict]) -> dict:
+    """最近两个有效点之间的变化。概率的 abs 代表百分点,价格的 abs 代表价格差。"""
+    valid = [pt for pt in sorted(series, key=lambda x: x["t"]) if pt.get("v") is not None]
+    if len(valid) < 2:
+        return {"from_t": None, "to_t": None, "from": None, "to": None,
+                "abs": None, "pct": None}
+    prev, cur = valid[-2], valid[-1]
+    diff = cur["v"] - prev["v"]
+    pct = None if prev["v"] == 0 else diff / prev["v"] * 100
+    return {
+        "from_t": prev["t"],
+        "to_t": cur["t"],
+        "from": prev["v"],
+        "to": cur["v"],
+        "abs": _round2(diff),
+        "pct": _round2(pct),
+    }
+
+
+def detect_prob_spikes(prob: list[dict], threshold_pp: float) -> list[dict]:
+    """识别相邻概率点之间的绝对变化超过阈值的日期。"""
+    valid = [pt for pt in sorted(prob, key=lambda x: x["t"]) if pt.get("v") is not None]
+    out = []
+    for prev, cur in zip(valid, valid[1:]):
+        diff = cur["v"] - prev["v"]
+        if abs(diff) < threshold_pp:
+            continue
+        pct = None if prev["v"] == 0 else diff / prev["v"] * 100
+        out.append({
+            "t": cur["t"],
+            "v": cur["v"],
+            "prev_t": prev["t"],
+            "prev": prev["v"],
+            "change_pp": _round2(diff),
+            "change_pct": _round2(pct),
+        })
+    return out
+
+
 def build_aligned(prob: list[dict], price: list[dict]) -> list[dict]:
-    """对每个有概率的日期,取该日(含之前)最近的价格,前向填充。"""
+    """对重叠日期窗口内的概率日期,取该日(含之前)最近的价格。"""
     if not prob:
         return []
     price_sorted = sorted(price, key=lambda x: x["t"])
+    if not price_sorted:
+        return []
+    first_price = price_sorted[0]["t"]
+    last_price_day = price_sorted[-1]["t"]
     out = []
     j = 0
-    last_price = None
+    last_price_value = None
     for pp in sorted(prob, key=lambda x: x["t"]):
+        if pp["t"] < first_price:
+            continue
+        if pp["t"] > last_price_day:
+            break
         while j < len(price_sorted) and price_sorted[j]["t"] <= pp["t"]:
-            last_price = price_sorted[j]["v"]
+            last_price_value = price_sorted[j]["v"]
             j += 1
-        out.append({"t": pp["t"], "prob": pp["v"], "price": last_price})
+        out.append({"t": pp["t"], "prob": pp["v"], "price": last_price_value})
     return out
 
 
 def main() -> None:
     cfg = c.load_config()
     c.ensure_dirs()
+    spike_threshold_pp = float(cfg.get("settings", {}).get("prob_spike_abs_pp", 10))
 
     poly = c.read_json(c.RAW_POLYMARKET, {"markets": []})
     prices = c.read_json(c.RAW_PRICES, {})
@@ -151,6 +206,11 @@ def main() -> None:
             "prob": prob,
             "price": price,
             "aligned": build_aligned(prob, price),
+            "changes": {
+                "prob": series_change(prob),
+                "price": series_change(price),
+            },
+            "prob_spikes": detect_prob_spikes(prob, spike_threshold_pp),
             "stats": compute_stats(prob, price),
         })
 

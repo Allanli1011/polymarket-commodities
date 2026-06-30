@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const COLORS = { prob: "#2a78d6", price: "#d98515", thr: "#9a978d" };
+  const COLORS = { prob: "#2a78d6", price: "#d98515", thr: "#9a978d", spikeUp: "#1d9e75", spikeDown: "#d84a3a" };
   const state = { data: null, rangeDays: 90, commodity: "全部", charts: {}, detailChart: null };
 
   // ── 主题切换 ───────────────────────────────────────────────
@@ -39,6 +39,21 @@
     const x = asNumber(n);
     return x == null ? "—" : x >= 1e6 ? "$" + (x / 1e6).toFixed(2) + "M" : x >= 1e3 ? "$" + (x / 1e3).toFixed(1) + "K" : "$" + x;
   };
+  const fmtSignedNum = (n, d = 2) => {
+    const x = asNumber(n);
+    if (x == null) return "—";
+    return (x > 0 ? "+" : x < 0 ? "−" : "") + fmtNum(Math.abs(x), d);
+  };
+  const fmtSignedMoney = (n) => {
+    const x = asNumber(n);
+    if (x == null) return "—";
+    return (x > 0 ? "+" : x < 0 ? "−" : "") + fmtMoney(Math.abs(x));
+  };
+  const fmtSignedPct = (n) => {
+    const x = asNumber(n);
+    if (x == null) return "";
+    return " (" + (x > 0 ? "+" : x < 0 ? "−" : "") + fmtNum(Math.abs(x), 1) + "%)";
+  };
 
   function cutoffDate(days) {
     if (!days) return null;
@@ -48,6 +63,41 @@
   }
   const filterSeries = (series, cutoff) =>
     !cutoff ? series : (series || []).filter((p) => p.t >= cutoff);
+  const fallbackAligned = (m) => {
+    const priceByDay = new Map((m.price || []).map((p) => [p.t, p.v]));
+    return (m.prob || []).map((p) => ({ t: p.t, prob: p.v, price: priceByDay.get(p.t) }));
+  };
+  function chartRows(m) {
+    const cutoff = cutoffDate(state.rangeDays);
+    const aligned = (m.aligned && m.aligned.length ? m.aligned : fallbackAligned(m));
+    return aligned.filter((p) =>
+      p.prob != null && p.price != null && (!cutoff || p.t >= cutoff)
+    );
+  }
+  function rangeChange(rows, field) {
+    if (!rows || rows.length < 2) return null;
+    const first = asNumber(rows[0][field]);
+    const last = asNumber(rows[rows.length - 1][field]);
+    if (first == null || last == null) return null;
+    const diff = last - first;
+    return {
+      abs: diff,
+      pct: first === 0 ? null : diff / first * 100,
+      from: first,
+      to: last,
+      from_t: rows[0].t,
+      to_t: rows[rows.length - 1].t,
+    };
+  }
+  function visibleSpikes(m, rows) {
+    if (!rows.length) return [];
+    const start = rows[0].t;
+    const end = rows[rows.length - 1].t;
+    return (m.prob_spikes || []).filter((s) => s.t >= start && s.t <= end);
+  }
+  const changeCls = (ch) => !ch || ch.abs === 0 ? "" : ch.abs > 0 ? "pos" : "neg";
+  const fmtProbChange = (ch) => ch ? fmtSignedNum(ch.abs, 1) + "pp" + fmtSignedPct(ch.pct) : "—";
+  const fmtPriceChange = (ch) => ch ? fmtSignedMoney(ch.abs) + fmtSignedPct(ch.pct) : "—";
 
   // ── 数据加载 ───────────────────────────────────────────────
   async function load() {
@@ -132,6 +182,10 @@
   function buildCard(m) {
     const card = document.createElement("div");
     card.className = "card";
+    const rows = chartRows(m);
+    const probChange = rangeChange(rows, "prob");
+    const priceChange = rangeChange(rows, "price");
+    const spikes = visibleSpikes(m, rows);
 
     const diff = m.threshold != null && m.latest_price != null ? m.latest_price - m.threshold : null;
     const diffCls = diff == null ? "" : diff >= 0 ? "pos" : "neg";
@@ -143,6 +197,7 @@
     if (m.end_date) subTags.push(`<span class="tag">到期 ${escapeHtml(m.end_date)}</span>`);
     if (m.threshold != null) subTags.push(`<span class="tag">阈值 ${fmtMoney(m.threshold)} ${escapeHtml(m.unit || "")}</span>`);
     if (m.stale) subTags.push('<span class="tag tag-stale">数据滞后</span>');
+    if (spikes.length) subTags.push(`<span class="tag tag-spike">概率异动 ${spikes.length}</span>`);
 
     card.innerHTML = `
       <div class="card-head"><h3 class="card-title">${escapeHtml(m.title || m.key)}</h3>
@@ -151,10 +206,14 @@
       <div class="chart-wrap"><canvas id="c-${cssId(m.key)}"
            role="img" aria-label="${escapeHtml(m.title || m.key)} 的隐含概率与${escapeHtml(m.commodity || "标的物")}价格叠加图"></canvas></div>
       <div class="stats">
-        <div class="stat"><span class="stat-label">隐含概率(${escapeHtml(m.track_outcome || "Yes")})</span>
+        <div class="stat"><span class="stat-label">隐含概率 · 左轴(${escapeHtml(m.track_outcome || "Yes")})</span>
           <span class="stat-value prob">${m.latest_prob == null ? "—" : fmtNum(m.latest_prob, 1) + "%"}</span></div>
-        <div class="stat"><span class="stat-label">${escapeHtml(m.commodity || "标的")}现价</span>
+        <div class="stat"><span class="stat-label">${escapeHtml(m.commodity || "标的")}现价 · 右轴</span>
           <span class="stat-value price">${fmtMoney(m.latest_price)}</span></div>
+        <div class="stat"><span class="stat-label">区间概率变化</span>
+          <span class="stat-value ${changeCls(probChange)}" style="font-size:13px">${fmtProbChange(probChange)}</span></div>
+        <div class="stat"><span class="stat-label">区间价格变化</span>
+          <span class="stat-value ${changeCls(priceChange)}" style="font-size:13px">${fmtPriceChange(priceChange)}</span></div>
         <div class="stat"><span class="stat-label">与阈值</span>
           <span class="stat-value ${diffCls}" style="font-size:13px">${diffTxt}</span></div>
         <div class="stat"><span class="stat-label">24h 成交</span>
@@ -171,25 +230,47 @@
   }
 
   function makeChart(canvasEl, m) {
-    const cutoff = cutoffDate(state.rangeDays);
-    const prob = filterSeries(m.prob, cutoff).map((p) => ({ x: p.t, y: p.v }));
-    const price = filterSeries(m.price, cutoff).map((p) => ({ x: p.t, y: p.v }));
+    const rows = chartRows(m);
+    const prob = rows.map((p) => ({ x: p.t, y: p.prob }));
+    const price = rows.map((p) => ({ x: p.t, y: p.price }));
+    const spikes = visibleSpikes(m, rows);
+    const spikeUp = spikes
+      .filter((s) => s.change_pp > 0)
+      .map((s) => ({ x: s.t, y: s.v, change_pp: s.change_pp, change_pct: s.change_pct }));
+    const spikeDown = spikes
+      .filter((s) => s.change_pp < 0)
+      .map((s) => ({ x: s.t, y: s.v, change_pp: s.change_pp, change_pct: s.change_pct }));
 
     const dark = isDark();
     const tick = dark ? "#84837b" : "#8a8980";
     const gridc = dark ? "rgba(255,255,255,.07)" : "rgba(0,0,0,.06)";
+    const priceAxisTitle = "右轴 · " + (m.commodity || "商品价格") + (m.unit ? " (" + m.unit + ")" : "");
 
     const datasets = [
-      { label: "隐含概率", yAxisID: "prob", data: prob, borderColor: COLORS.prob,
+      { label: "隐含概率（左轴）", yAxisID: "prob", data: prob, borderColor: COLORS.prob,
         backgroundColor: "rgba(42,120,214,.10)", borderWidth: 2, fill: true, tension: .25,
         pointRadius: 0, pointHoverRadius: 4 },
-      { label: m.commodity || "价格", yAxisID: "price", data: price, borderColor: COLORS.price,
+      { label: (m.commodity || "价格") + "（右轴）", yAxisID: "price", data: price, borderColor: COLORS.price,
         borderWidth: 2, tension: .25, pointRadius: 0, pointHoverRadius: 4 },
     ];
+    if (spikeUp.length) {
+      datasets.push({
+        type: "scatter", label: "概率大涨（左轴）", yAxisID: "prob", data: spikeUp,
+        borderColor: COLORS.spikeUp, backgroundColor: COLORS.spikeUp, pointStyle: "triangle",
+        pointRadius: 5, pointHoverRadius: 7, order: 0,
+      });
+    }
+    if (spikeDown.length) {
+      datasets.push({
+        type: "scatter", label: "概率大跌（左轴）", yAxisID: "prob", data: spikeDown,
+        borderColor: COLORS.spikeDown, backgroundColor: COLORS.spikeDown, pointStyle: "triangle",
+        pointRotation: 180, pointRadius: 5, pointHoverRadius: 7, order: 0,
+      });
+    }
     // 阈值参考线(价格轴上的水平虚线)
     if (m.threshold != null && price.length) {
       datasets.push({
-        label: "阈值", yAxisID: "price", borderColor: COLORS.thr, borderWidth: 1.5,
+        label: "阈值（右轴）", yAxisID: "price", borderColor: COLORS.thr, borderWidth: 1.5,
         borderDash: [5, 4], pointRadius: 0, pointHoverRadius: 0, fill: false,
         data: [{ x: price[0].x, y: m.threshold }, { x: price[price.length - 1].x, y: m.threshold }],
       });
@@ -207,8 +288,12 @@
             callbacks: {
               label: (c) => {
                 const v = c.parsed.y;
+                if (c.dataset.type === "scatter") {
+                  const raw = c.raw || {};
+                  return `${c.dataset.label}: ${fmtSignedNum(raw.change_pp, 1)}pp 至 ${fmtNum(v, 1)}%`;
+                }
                 if (c.dataset.yAxisID === "prob") return `隐含概率: ${v.toFixed(1)}%`;
-                if (c.dataset.label === "阈值") return `阈值: $${v.toLocaleString()}`;
+                if (c.dataset.label && c.dataset.label.startsWith("阈值")) return `阈值: $${v.toLocaleString()}`;
                 return `${c.dataset.label}: $${v.toLocaleString()}`;
               },
             },
@@ -218,8 +303,10 @@
           x: { type: "time", time: { unit: "month", tooltipFormat: "yyyy-MM-dd" },
                grid: { display: false }, ticks: { color: tick, font: { size: 10 }, maxRotation: 0 } },
           prob: { position: "left", min: 0, max: 100, grid: { color: gridc },
+                  title: { display: true, text: "左轴 · 隐含概率 (%)", color: tick, font: { size: 11, weight: "600" } },
                   ticks: { color: tick, font: { size: 10 }, callback: (v) => v + "%" } },
           price: { position: "right", grid: { drawOnChartArea: false },
+                   title: { display: true, text: priceAxisTitle, color: tick, font: { size: 11, weight: "600" } },
                    ticks: { color: tick, font: { size: 10 }, callback: (v) => "$" + v } },
         },
       },
@@ -258,6 +345,10 @@
 
   function openDetail(m) {
     const ov = ensureModal();
+    const rows = chartRows(m);
+    const probChange = rangeChange(rows, "prob");
+    const priceChange = rangeChange(rows, "price");
+    const spikes = visibleSpikes(m, rows);
     const diff = m.threshold != null && m.latest_price != null ? m.latest_price - m.threshold : null;
     const diffCls = diff == null ? "" : diff >= 0 ? "pos" : "neg";
     const diffTxt = diff == null ? "无阈值"
@@ -271,13 +362,16 @@
     if (m.threshold != null) tags.push(`<span class="tag">阈值 ${fmtMoney(m.threshold)} ${escapeHtml(m.unit || "")}</span>`);
     if (m.price_source) tags.push(`<span class="tag">价格源 ${escapeHtml(m.price_source)}</span>`);
     if (m.stale) tags.push('<span class="tag tag-stale">数据滞后</span>');
+    if (spikes.length) tags.push(`<span class="tag tag-spike">概率异动 ${spikes.length}</span>`);
     ov.querySelector("#modal-tags").innerHTML = tags.join("");
 
     const stat = (label, val, cls = "") =>
       `<div class="stat"><span class="stat-label">${label}</span><span class="stat-value ${cls}" style="font-size:15px">${val}</span></div>`;
     ov.querySelector("#modal-stats").innerHTML =
-      stat(`隐含概率(${escapeHtml(m.track_outcome || "Yes")})`, m.latest_prob == null ? "—" : fmtNum(m.latest_prob, 1) + "%", "prob") +
-      stat(`${escapeHtml(m.commodity || "标的")}现价`, fmtMoney(m.latest_price), "price") +
+      stat(`隐含概率 · 左轴(${escapeHtml(m.track_outcome || "Yes")})`, m.latest_prob == null ? "—" : fmtNum(m.latest_prob, 1) + "%", "prob") +
+      stat(`${escapeHtml(m.commodity || "标的")}现价 · 右轴`, fmtMoney(m.latest_price), "price") +
+      stat("区间概率变化", fmtProbChange(probChange), changeCls(probChange)) +
+      stat("区间价格变化", fmtPriceChange(priceChange), changeCls(priceChange)) +
       stat("与阈值", diffTxt, diffCls) +
       stat("24h 成交", fmtVol(m.volume24hr), "") +
       stat("概率-价格相关", fmtCorr(s.corr_levels), corrCls(s.corr_levels)) +
