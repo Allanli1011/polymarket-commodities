@@ -1,0 +1,14 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+.claude/
+
+# 抓取中间产物(原始缓存),非最终数据
+data/raw/
+
+# OS
+.DS_Store
+Thumbs.db

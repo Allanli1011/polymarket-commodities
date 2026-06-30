@@ -1,0 +1,61 @@
+# ───────────────────────────────────────────────────────────────────────────
+# 链上预测市场 × 大宗商品盘口追踪 — 配置
+# 改这里就能调整追踪范围 / 刷新行为,无需改代码。
+# ───────────────────────────────────────────────────────────────────────────
+
+settings:
+  # auto   = 按 24h 成交量自动发现并追踪当前最活跃的商品盘口(推荐,盘口按月轮换也不用手动维护)
+  # pinned = 只追踪下方 pinned 列表里的盘口
+  mode: auto
+
+  top_n: 12                       # auto 模式追踪的盘口数量(按 24h 成交量取前 N)
+  min_volume_24hr: 300            # auto 模式过滤:24h 成交量下限(美元)
+  commodities_tag_id: 101031      # Polymarket "Commodities" 标签 id(经核实)
+
+  # Polymarket 概率历史(CLOB /prices-history)
+  polymarket_history_interval: "max"
+  polymarket_history_fidelity: 1440   # 分钟;1440 = 日级
+
+  # 标的物价格(Yahoo)
+  price_range: "1y"
+  price_interval: "1d"
+
+  track_outcome: "Yes"            # 追踪哪个结果的概率
+
+# 盘口标题括号里的商品代码 → 标的物(Yahoo 符号 / 展示名 / 单位)
+# 例:"Will Gold (GC) hit (HIGH) $6,000..." 里的 GC
+symbol_map:
+  GC:     { symbol: "GC=F", label: "黄金",       unit: "USD/oz" }
+  XAUUSD: { symbol: "GC=F", label: "黄金",       unit: "USD/oz" }
+  SI:     { symbol: "SI=F", label: "白银",       unit: "USD/oz" }
+  XAGUSD: { symbol: "SI=F", label: "白银",       unit: "USD/oz" }
+  CL:     { symbol: "CL=F", label: "WTI 原油",   unit: "USD/bbl" }
+  WTI:    { symbol: "CL=F", label: "WTI 原油",   unit: "USD/bbl" }
+  BZ:     { symbol: "BZ=F", label: "Brent 原油", unit: "USD/bbl" }
+  NG:     { symbol: "NG=F", label: "天然气",     unit: "USD/MMBtu" }
+  HG:     { symbol: "HG=F", label: "铜",         unit: "USD/lb" }
+  ZW:     { symbol: "ZW=F", label: "小麦",       unit: "USD/bu" }
+  ZC:     { symbol: "ZC=F", label: "玉米",       unit: "USD/bu" }
+  PL:     { symbol: "PL=F", label: "铂金",       unit: "USD/oz" }
+  PA:     { symbol: "PA=F", label: "钯金",       unit: "USD/oz" }
+
+# 标题里没有括号代码时的关键词回退(关键词 → 上面的商品代码)
+# 例:"Will Crude Oil reach a new all-time high..." 没有 (CL),靠关键词命中
+keyword_map:
+  "crude oil":   CL
+  "wti":         CL
+  "brent":       BZ
+  "gold":        GC
+  "silver":      SI
+  "natural gas": NG
+  "copper":      HG
+  "wheat":       ZW
+  "corn":        ZC
+  "platinum":    PL
+  "palladium":   PA
+
+# 始终强制追踪的盘口(按 Polymarket slug)。
+# pinned 模式下只追踪这些;auto 模式下这些会被合并进自动发现的结果(去重)。
+pinned:
+  - will-gold-gc-hit-high-6000-by-end-of-december
+  - will-gold-gc-hit-high-7000-by-end-of-december

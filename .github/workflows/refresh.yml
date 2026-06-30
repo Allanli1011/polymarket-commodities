@@ -1,0 +1,74 @@
+name: Refresh & Deploy
+
+on:
+  schedule:
+    - cron: "0 2 * * *"        # 每天 UTC 02:00 自动刷新(最小间隔 5 分钟;免费仓库 60 天无提交会自动停)
+  workflow_dispatch: {}         # 支持在 Actions 页面手动触发
+
+permissions:
+  contents: write               # 把刷新后的 data.json 提交回仓库(留历史)
+  pages: write                  # 部署 GitHub Pages
+  id-token: write               # Pages 部署所需 OIDC
+
+# 避免并发部署互相覆盖;不取消进行中的部署
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Validate scripts and frontend
+        run: |
+          python -m py_compile scripts/common.py scripts/fetch_polymarket.py scripts/fetch_prices.py scripts/discover.py scripts/build_data.py
+          node --check site/app.js
+
+      - name: Fetch data & build site/data.json
+        run: |
+          python scripts/fetch_polymarket.py
+          python scripts/fetch_prices.py
+          python scripts/build_data.py
+
+      - name: Commit refreshed data (history)
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add site/data.json
+          if git diff --staged --quiet; then
+            echo "数据无变化,跳过提交"
+          else
+            git commit -m "chore: refresh market data [skip ci]"
+            git push
+          fi
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: ./site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
